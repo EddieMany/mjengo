@@ -9,13 +9,11 @@ import io
 st.set_page_config(page_title="Mjengo App", page_icon="🏗️", layout="wide")
 
 
-# --- SECURITY: PASSCODE FROM SECRETS / ENV (NO PLAINTEXT IN CODE) ---
+# --- SECURITY: PASSCODE FROM SECRETS / ENV ---
 def get_admin_passcode():
     """
     Resolve the admin passcode securely.
     Priority: 1) .streamlit/secrets.toml  2) environment variable
-    Broad exception catch is intentional for cross-version compatibility
-    (older Streamlit raises FileNotFoundError if no secrets file exists).
     """
     try:
         secret = st.secrets.get("ADMIN_PASSCODE")
@@ -87,7 +85,7 @@ def init_db():
     conn.close()
 
 
-# Helper: wa.me requires digits only (no "+", spaces or dashes)
+# Helper: wa.me requires digits only
 def clean_phone(phone):
     return "".join(ch for ch in (phone or "") if ch.isdigit())
 
@@ -172,9 +170,7 @@ if page == "Find Contractors":
 
             with col_img:
                 if con["image"]:
-                    # FIXED: width="stretch" replaces deprecated use_container_width
-                    # (requires Streamlit >= 1.49)
-                    st.image(Image.open(io.BytesIO(con["image"])), caption="Work Sample Portfolio", width="stretch")
+                    st.image(Image.open(io.BytesIO(con["image"])), caption="Work Sample Portfolio", use_container_width=True)
                 else:
                     st.warning("📸 No portfolio image uploaded.")
 
@@ -256,8 +252,9 @@ elif page == "Project Budget Estimator":
 elif page == "Join Marketplace":
     st.write("### 📝 Register Professional Services or Material Inventory")
     reg_type = st.radio("Account Category:", ["Contractor / Specialist", "Material Supplier Company"])
+    
     if reg_type == "Contractor / Specialist":
-        with st.form("con_reg", clear_on_submit=False):  # FIXED: keep input on validation errors
+        with st.form("con_reg", clear_on_submit=False):
             name = st.text_input("Professional / Company Name:")
             prof = st.selectbox("Discipline Subcategory:", ["Civil Engineer", "Architect", "Electrical Contractor", "Mason / Fundi", "Plumber"])
             certs = st.text_area("Accreditations & Work Experience Details:")
@@ -266,6 +263,7 @@ elif page == "Join Marketplace":
             phone = st.text_input("Mobile Contact (e.g. +2547XXXXXXXX):")
             uploaded_file = st.file_uploader("Upload Past Project Photo or Certificate (JPG/PNG):", type=["jpg", "jpeg", "png"])
             submit_con = st.form_submit_button("Launch Public Profile")
+            
         if submit_con:
             if name and loc and phone:
                 img_blob = None
@@ -280,7 +278,7 @@ elif page == "Join Marketplace":
             else:
                 st.error("Missing mandatory fields: Name, Location, and Phone Number.")
     else:
-        with st.form("mat_reg", clear_on_submit=False):  # FIXED: keep input on validation errors
+        with st.form("mat_reg", clear_on_submit=False):
             sup_name = st.text_input("Supplier / Hardware Name:")
             item = st.text_input("Building Material Description (e.g., Cement Bags):")
             price = st.text_input("Price tag per unit:")
@@ -288,6 +286,7 @@ elif page == "Join Marketplace":
             loc = st.text_input("Supply Base Town/City:")
             phone = st.text_input("Sales Desk Mobile Phone:")
             submit_mat = st.form_submit_button("Publish Store Inventory")
+            
         if submit_mat:
             if sup_name and item and price and loc and phone:
                 conn = sqlite3.connect("mjengo.db")
@@ -303,11 +302,12 @@ elif page == "Join Marketplace":
 elif page == "Admin Panel":
     st.write("### 🛡️ Platform Moderation Panel")
     pwd = st.text_input("Enter System Master Passcode to access listing logs:", type="password")
-    # FIXED: passcode resolved via st.secrets / environment variable — nothing hardcoded
+    
     if pwd and pwd == get_admin_passcode():
         st.success("Authorized Access Granted.")
         conn = sqlite3.connect("mjengo.db")
         c = conn.cursor()
+        
         st.write("#### 👷 Registered Contractors Listing Management")
         c.execute("SELECT id, name, profession, location FROM contractors")
         cons_list = c.fetchall()
@@ -317,8 +317,10 @@ elif page == "Admin Panel":
             if col_del.button("🗑️ Delete Contractor", key=f"del_c_{cid}"):
                 c.execute("DELETE FROM contractors WHERE id = ?", (cid,))
                 conn.commit()
+                conn.close() # Connection closure safely patched before state rerun
                 st.warning(f"Profile {cname} removed.")
                 st.rerun()
+                
         st.write("#### 🧱 Active Supply Catalog Management")
         c.execute("SELECT id, supplier_name, item_name, location FROM materials")
         mats_list = c.fetchall()
@@ -328,6 +330,7 @@ elif page == "Admin Panel":
             if col_m_del.button("🗑️ Remove Listing", key=f"del_m_{mid}"):
                 c.execute("DELETE FROM materials WHERE id = ?", (mid,))
                 conn.commit()
+                conn.close() # Connection closure safely patched before state rerun
                 st.warning("Material listing purged.")
                 st.rerun()
         conn.close()
