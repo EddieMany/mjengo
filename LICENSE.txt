@@ -1,0 +1,35 @@
+Copyright (c) 2026 Mjengo Premium Platform. All rights reserved.
+
+PROPERTY OF MJENGO PREMIUM PLATFORM. ALL RIGHTS RESERVED.
+
+This software, its source code, assets, interfaces, documentation, and database 
+architectures (collectively referred to as the "Software") are the exclusive 
+intellectual property of the Copyright Holder. 
+
+TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION:
+
+1. PROHIBITED USES
+No person or entity may copy, modify, distribute, publish, sublicense, lease, sell, 
+decompile, reverse-engineer, or commercially exploit any part of this Software 
+without the express prior written consent of the Copyright Holder.
+
+2. PRIVATE VIEWING PERMISSION
+Permission is granted solely for individuals to view the public source code within 
+this specific GitHub repository for educational, personal evaluation, or review 
+purposes. This does not grant any implicit operational transfer of intellectual property.
+
+3. DERIVATIVE WORKS
+The creation of derivative projects, application clones, or localized adaptations 
+based directly or indirectly on this Software's source architecture is strictly prohibited.
+
+4. NO WARRANTY
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, 
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE 
+SOFTWARE.
+
+For licensing inquiries, corporate partnerships, or custom integration requests, 
+please contact the Author directly.
