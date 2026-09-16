@@ -1,5 +1,6 @@
 import os
-import sqlite3
+import psycopg2
+from psycopg2.extras import DictCursor
 import streamlit as st
 import urllib.parse
 from PIL import Image
@@ -24,15 +25,25 @@ def get_admin_passcode():
     return os.environ.get("ADMIN_PASSCODE", "")
 
 
+# --- DATABASE CONNECTION UTILITY ---
+def get_db_connection():
+    """Establishes a connection to the hosted Supabase PostgreSQL instance securely."""
+    db_url = st.secrets.get("DATABASE_URL") or os.environ.get("DATABASE_URL")
+    if not db_url:
+        st.error("Missing DATABASE_URL secret parameter! Please check your configuration.")
+        st.stop()
+    return psycopg2.connect(db_url)
+
+
 # --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect("mjengo.db")
+    conn = get_db_connection()
     c = conn.cursor()
 
-    # 1. Contractors Table
+    # 1. Contractors Table (PostgreSQL Serial + Bytea types)
     c.execute('''
         CREATE TABLE IF NOT EXISTS contractors (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             profession TEXT NOT NULL,
             certifications TEXT,
@@ -41,14 +52,14 @@ def init_db():
             phone TEXT,
             total_score REAL DEFAULT 0,
             review_count INTEGER DEFAULT 0,
-            portfolio_image BLOB
+            portfolio_image BYTEA
         )
     ''')
 
     # 2. Materials Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS materials (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             supplier_name TEXT NOT NULL,
             item_name TEXT NOT NULL,
             price TEXT NOT NULL,
@@ -57,12 +68,13 @@ def init_db():
             phone TEXT NOT NULL
         )
     ''')
+    conn.commit()
 
-    # Seed default baseline data if empty
-    c.execute("SELECT COUNT(*) FROM contractors")
+    # Seed baseline data if table is fresh
+    c.execute("SELECT COUNT(*) FROM contractors;")
     if c.fetchone()[0] == 0:
         c.executemany(
-            "INSERT INTO contractors (name, profession, certifications, fee, location, phone, total_score, review_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO contractors (name, profession, certifications, fee, location, phone, total_score, review_count) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             [
                 ("Eng. John Kamau", "Civil Engineer", "NCA Reg 1, Bsc. Civil Eng", "KES 5,000 / Hr", "Nairobi", "+254700000000", 24.5, 5),
                 ("Alice Omwamba", "Architect", "BORAQS Registered Professional", "KES 50,000 / Plan", "Kisumu", "+254711111111", 19.2, 4),
@@ -71,10 +83,10 @@ def init_db():
             ]
         )
 
-    c.execute("SELECT COUNT(*) FROM materials")
+    c.execute("SELECT COUNT(*) FROM materials;")
     if c.fetchone()[0] == 0:
         c.executemany(
-            "INSERT INTO materials (supplier_name, item_name, price, quantity, location, phone) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO materials (supplier_name, item_name, price, quantity, location, phone) VALUES (%s, %s, %s, %s, %s, %s)",
             [
                 ("Apex Hardware Ltd", "Cement (50KG Bag)", "KES 850", "500 Bags", "Nairobi", "+254744444444"),
                 ("Western Quarry Suppliers", "River Sand (per Tonne)", "KES 3,500", "40 Tonnes", "Kakamega", "+254755555555"),
@@ -82,63 +94,67 @@ def init_db():
             ]
         )
     conn.commit()
+    c.close()
     conn.close()
 
 
-# Helper: wa.me requires digits only
+# Helper: wa.me requires digits only (no "+", spaces or dashes)
 def clean_phone(phone):
     return "".join(ch for ch in (phone or "") if ch.isdigit())
 
 
 # --- DATABASE OPERATIONS ---
 def get_ranked_contractors(profession_filter="All", search_city=""):
-    conn = sqlite3.connect("mjengo.db")
-    c = conn.cursor()
+    conn = get_db_connection()
+    c = conn.cursor(cursor_factory=DictCursor)
     query = "SELECT id, name, profession, certifications, fee, location, phone, total_score, review_count, portfolio_image FROM contractors WHERE 1=1"
     params = []
 
     if profession_filter != "All":
-        query += " AND profession = ?"
+        query += " AND profession = %s"
         params.append(profession_filter)
     if search_city:
-        query += " AND location LIKE ?"
+        query += " AND location ILIKE %s"  # PostgreSQL Case-Insensitive Matching
         params.append(f"%{search_city}%")
 
     c.execute(query, params)
     rows = c.fetchall()
+    c.close()
     conn.close()
 
     contractors = []
     for r in rows:
-        cid, name, prof, certs, fee, loc, phone, total_score, review_count, img_blob = r
-        avg_rating = round(total_score / review_count, 1) if review_count > 0 else 0.0
+        avg_rating = round(r["total_score"] / r["review_count"], 1) if r["review_count"] > 0 else 0.0
+        # Convert memoryview/bytea data to usable raw Python bytes if layout exists
+        img_blob = bytes(r["portfolio_image"]) if r["portfolio_image"] else None
 
         contractors.append({
-            "id": cid, "name": name, "profession": prof, "certifications": certs,
-            "fee": fee, "location": loc, "phone": phone, "avg_rating": avg_rating,
-            "reviews": review_count, "image": img_blob
+            "id": r["id"], "name": r["name"], "profession": r["profession"], "certifications": r["certifications"],
+            "fee": r["fee"], "location": r["location"], "phone": r["phone"], "avg_rating": avg_rating,
+            "reviews": r["review_count"], "image": img_blob
         })
     return sorted(contractors, key=lambda x: (x["avg_rating"], x["reviews"]), reverse=True)
 
 
 def get_materials(search_city=""):
-    conn = sqlite3.connect("mjengo.db")
-    c = conn.cursor()
+    conn = get_db_connection()
+    c = conn.cursor(cursor_factory=DictCursor)
     query = "SELECT id, supplier_name, item_name, price, quantity, location, phone FROM materials WHERE 1=1"
     params = []
 
     if search_city:
-        query += " AND location LIKE ?"
+        query += " AND location ILIKE %s"
         params.append(f"%{search_city}%")
 
     c.execute(query, params)
     rows = c.fetchall()
+    c.close()
     conn.close()
 
     return [
         {
-            "id": r[0], "supplier": r[1], "item": r[2],
-            "price": r[3], "qty": r[4], "location": r[5], "phone": r[6]
+            "id": r["id"], "supplier": r["supplier_name"], "item": r["item_name"],
+            "price": r["price"], "qty": r["quantity"], "location": r["location"], "phone": r["phone"]
         } for r in rows
     ]
 
@@ -153,6 +169,7 @@ page = st.sidebar.radio("Go to Options:", ["Find Contractors", "Materials Store"
 st.sidebar.markdown("---")
 st.sidebar.subheader("📍 Quick Location Search")
 city_query = st.sidebar.text_input("Filter by Town/City:", value="").strip()
+
 
 # --- PAGE 1: FIND CONTRACTORS ---
 if page == "Find Contractors":
@@ -192,14 +209,16 @@ if page == "Find Contractors":
                 st.write("**Rate Experience:**")
                 score = st.slider("Select Stars", 1, 5, 5, key=f"s_{con['id']}")
                 if st.button("Submit Rating", key=f"b_{con['id']}"):
-                    conn = sqlite3.connect("mjengo.db")
+                    conn = get_db_connection()
                     c = conn.cursor()
-                    c.execute("UPDATE contractors SET total_score = total_score + ?, review_count = review_count + 1 WHERE id = ?", (score, con['id']))
+                    c.execute("UPDATE contractors SET total_score = total_score + %s, review_count = review_count + 1 WHERE id = %s", (score, con['id']))
                     conn.commit()
+                    c.close()
                     conn.close()
                     st.success("Rating submitted successfully!")
                     st.rerun()
             st.divider()
+
 
 # --- PAGE 2: MATERIALS STORE ---
 elif page == "Materials Store":
@@ -211,7 +230,7 @@ elif page == "Materials Store":
 
     for mat in materials_list:
         with st.container():
-            col_info, col_contact = st.columns([3, 1])
+            col_info, col_contact = st.columns()
             with col_info:
                 st.markdown(f"#### 📦 {mat['item']}")
                 st.write(f"🏢 **Supplier:** {mat['supplier']} | 📍 **Depot:** {mat['location']}")
@@ -224,6 +243,7 @@ elif page == "Materials Store":
                     <a href="tel:{mat['phone']}"><button style="background-color:#0078D4; color:white; border:none; padding:8px 12px; border-radius:4px; cursor:pointer; font-weight:bold; width:100%;">📞 Call Supplier</button></a>
                 ''', unsafe_allow_html=True)
             st.divider()
+
 
 # --- PAGE 3: PROJECT BUDGET ESTIMATOR ---
 elif page == "Project Budget Estimator":
@@ -248,6 +268,7 @@ elif page == "Project Budget Estimator":
     c2.metric("Estimated River Sand Volume", f"{max(0.5, sand_tonnes)} Tonnes")
     st.info("💡 Note: Standard 1:3 mortar density factors applied. Logistics parameters may vary locally by supplier.")
 
+
 # --- PAGE 4: JOIN MARKETPLACE ---
 elif page == "Join Marketplace":
     st.write("### 📝 Register Professional Services or Material Inventory")
@@ -269,14 +290,18 @@ elif page == "Join Marketplace":
                 img_blob = None
                 if uploaded_file is not None:
                     img_blob = uploaded_file.read()
-                conn = sqlite3.connect("mjengo.db")
+                
+                conn = get_db_connection()
                 c = conn.cursor()
-                c.execute("INSERT INTO contractors (name, profession, certifications, fee, location, phone, portfolio_image) VALUES (?, ?, ?, ?, ?, ?, ?)", (name, prof, certs, fee, loc, phone, img_blob))
+                c.execute("INSERT INTO contractors (name, profession, certifications, fee, location, phone, portfolio_image) VALUES (%s, %s, %s, %s, %s, %s, %s)", 
+                          (name, prof, certs, fee, loc, phone, psycopg2.Binary(img_blob) if img_blob else None))
                 conn.commit()
+                c.close()
                 conn.close()
                 st.success("Your professional Mjengo profile is now live!")
             else:
                 st.error("Missing mandatory fields: Name, Location, and Phone Number.")
+                
     else:
         with st.form("mat_reg", clear_on_submit=False):
             sup_name = st.text_input("Supplier / Hardware Name:")
@@ -289,14 +314,17 @@ elif page == "Join Marketplace":
             
         if submit_mat:
             if sup_name and item and price and loc and phone:
-                conn = sqlite3.connect("mjengo.db")
+                conn = get_db_connection()
                 c = conn.cursor()
-                c.execute("INSERT INTO materials (supplier_name, item_name, price, quantity, location, phone) VALUES (?, ?, ?, ?, ?, ?)", (sup_name, item, price, qty, loc, phone))
+                c.execute("INSERT INTO materials (supplier_name, item_name, price, quantity, location, phone) VALUES (%s, %s, %s, %s, %s, %s)", 
+                          (sup_name, item, price, qty, loc, phone))
                 conn.commit()
+                c.close()
                 conn.close()
                 st.success("Item inventory listed successfully!")
             else:
                 st.error("Missing mandatory fields: Supplier, Item, Price, Location, and Phone.")
+
 
 # --- PAGE 5: ADMIN PANEL ---
 elif page == "Admin Panel":
@@ -305,34 +333,42 @@ elif page == "Admin Panel":
     
     if pwd and pwd == get_admin_passcode():
         st.success("Authorized Access Granted.")
-        conn = sqlite3.connect("mjengo.db")
-        c = conn.cursor()
+        conn = get_db_connection()
+        c = conn.cursor(cursor_factory=DictCursor)
         
         st.write("#### 👷 Registered Contractors Listing Management")
         c.execute("SELECT id, name, profession, location FROM contractors")
         cons_list = c.fetchall()
-        for cid, cname, cprof, cloc in cons_list:
-            col_txt, col_del = st.columns([4, 1])
-            col_txt.write(f"ID: {cid} | {cname} ({cprof}) - {cloc}")
-            if col_del.button("🗑️ Delete Contractor", key=f"del_c_{cid}"):
-                c.execute("DELETE FROM contractors WHERE id = ?", (cid,))
-                conn.commit()
-                conn.close() # Connection closure safely patched before state rerun
-                st.warning(f"Profile {cname} removed.")
+        for con_row in cons_list:
+            col_txt, col_del = st.columns()
+            col_txt.write(f"ID: {con_row['id']} | {con_row['name']} ({con_row['profession']}) - {con_row['location']}")
+            if col_del.button("🗑️ Delete Contractor", key=f"del_c_{con_row['id']}"):
+                sub_conn = get_db_connection()
+                sub_c = sub_conn.cursor()
+                sub_c.execute("DELETE FROM contractors WHERE id = %s", (con_row['id'],))
+                sub_conn.commit()
+                sub_c.close()
+                sub_conn.close()
+                st.warning(f"Profile {con_row['name']} removed.")
                 st.rerun()
                 
         st.write("#### 🧱 Active Supply Catalog Management")
         c.execute("SELECT id, supplier_name, item_name, location FROM materials")
         mats_list = c.fetchall()
-        for mid, msup, mitem, mloc in mats_list:
-            col_m_txt, col_m_del = st.columns([4, 1])
-            col_m_txt.write(f"ID: {mid} | {mitem} by {msup} ({mloc})")
-            if col_m_del.button("🗑️ Remove Listing", key=f"del_m_{mid}"):
-                c.execute("DELETE FROM materials WHERE id = ?", (mid,))
-                conn.commit()
-                conn.close() # Connection closure safely patched before state rerun
+        for mat_row in mats_list:
+            col_m_txt, col_m_del = st.columns()
+            col_m_txt.write(f"ID: {mat_row['id']} | {mat_row['item_name']} by {mat_row['supplier_name']} ({mat_row['location']})")
+            if col_m_del.button("🗑️ Remove Listing", key=f"del_m_{mat_row['id']}"):
+                sub_conn = get_db_connection()
+                sub_c = sub_conn.cursor()
+                sub_c.execute("DELETE FROM materials WHERE id = %s", (mat_row['id'],))
+                sub_conn.commit()
+                sub_c.close()
+                sub_conn.close()
                 st.warning("Material listing purged.")
                 st.rerun()
+                
+        c.close()
         conn.close()
     elif pwd != "":
         st.error("Incorrect administrative credentials. Access denied.")
