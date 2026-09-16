@@ -11,10 +11,11 @@ st.set_page_config(page_title="Mjengo App", page_icon="🏗️", layout="wide")
 
 
 # --- SECURITY: PASSCODE FROM SECRETS / ENV ---
+@st.cache_resource
 def get_admin_passcode():
     """
     Resolve the admin passcode securely.
-    Priority: 1) .streamlit/secrets.toml  2) environment variable
+    Cached to prevent environment lookups on every rerun.
     """
     try:
         secret = st.secrets.get("ADMIN_PASSCODE")
@@ -26,44 +27,43 @@ def get_admin_passcode():
 
 
 # --- DATABASE CONNECTION UTILITY ---
+@st.cache_resource
+def get_db_connection_params():
+    """Parse and cache database connection settings so we don't process secrets repeatedly."""
+    if "DB_HOST" in st.secrets:
+        return {
+            "host": st.secrets["DB_HOST"],
+            "database": st.secrets["DB_NAME"],
+            "user": st.secrets["DB_USER"],
+            "password": st.secrets["DB_PASS"],
+            "port": st.secrets["DB_PORT"],
+            "sslmode": "require"
+        }
+    db_url = st.secrets.get("DATABASE_URL") or os.environ.get("DATABASE_URL")
+    if db_url:
+        return {"dsn": db_url}
+    return None
 
-# --- DATABASE CONNECTION UTILITY ---
 def get_db_connection():
-    """Establishes a connection to the hosted Supabase PostgreSQL instance securely using individual parameters."""
+    """Establishes a connection to the hosted Supabase PostgreSQL instance securely using cached parameters."""
     try:
-        # Check if individual parameters are set
-        if "DB_HOST" in st.secrets:
-            return psycopg2.connect(
-                host=st.secrets["DB_HOST"],
-                database=st.secrets["DB_NAME"],
-                user=st.secrets["DB_USER"],
-                password=st.secrets["DB_PASS"],
-                port=st.secrets["DB_PORT"],
-                sslmode="require"
-            )
+        params = get_db_connection_params()
+        if params:
+            if "dsn" in params:
+                return psycopg2.connect(params["dsn"])
+            return psycopg2.connect(**params)
         
-        # Fallback to absolute URL if present
-        db_url = st.secrets.get("DATABASE_URL") or os.environ.get("DATABASE_URL")
-        if db_url:
-            return psycopg2.connect(db_url)
-            
         st.error("Missing database connection parameter secrets!")
         st.stop()
     except Exception as e:
         st.error(f"🔌 Database Connection Failed: {str(e)}")
         st.stop()
 
-#def get_db_connection():
-#    """Establishes a connection to the hosted Supabase PostgreSQL instance securely."""
-#    db_url = st.secrets.get("DATABASE_URL") or os.environ.get("DATABASE_URL")
-#    if not db_url:
-#        st.error("Missing DATABASE_URL secret parameter! Please check your configuration.")
-#        st.stop()
-#    return psycopg2.connect(db_url)
-
 
 # --- DATABASE SETUP ---
+@st.cache_resource
 def init_db():
+    """Initializes the database schema and baseline data. Runs once per application lifespan."""
     conn = get_db_connection()
     c = conn.cursor()
 
@@ -131,7 +131,9 @@ def clean_phone(phone):
 
 
 # --- DATABASE OPERATIONS ---
+@st.cache_data(ttl=60)
 def get_ranked_contractors(profession_filter="All", search_city=""):
+    """Fetches and ranks contractors. Cached for 60 seconds to prevent crushing the DB on every single interaction."""
     conn = get_db_connection()
     c = conn.cursor(cursor_factory=DictCursor)
     query = "SELECT id, name, profession, certifications, fee, location, phone, total_score, review_count, portfolio_image FROM contractors WHERE 1=1"
@@ -141,7 +143,7 @@ def get_ranked_contractors(profession_filter="All", search_city=""):
         query += " AND profession = %s"
         params.append(profession_filter)
     if search_city:
-        query += " AND location ILIKE %s"  # PostgreSQL Case-Insensitive Matching
+        query += " AND location ILIKE %s"
         params.append(f"%{search_city}%")
 
     c.execute(query, params)
@@ -152,7 +154,6 @@ def get_ranked_contractors(profession_filter="All", search_city=""):
     contractors = []
     for r in rows:
         avg_rating = round(r["total_score"] / r["review_count"], 1) if r["review_count"] > 0 else 0.0
-        # Convert memoryview/bytea data to usable raw Python bytes if layout exists
         img_blob = bytes(r["portfolio_image"]) if r["portfolio_image"] else None
 
         contractors.append({
@@ -163,7 +164,9 @@ def get_ranked_contractors(profession_filter="All", search_city=""):
     return sorted(contractors, key=lambda x: (x["avg_rating"], x["reviews"]), reverse=True)
 
 
+@st.cache_data(ttl=60)
 def get_materials(search_city=""):
+    """Fetches materials catalog. Cached for 60 seconds to prevent heavy database connection overhead."""
     conn = get_db_connection()
     c = conn.cursor(cursor_factory=DictCursor)
     query = "SELECT id, supplier_name, item_name, price, quantity, location, phone FROM materials WHERE 1=1"
@@ -214,7 +217,8 @@ if page == "Find Contractors":
 
             with col_img:
                 if con["image"]:
-                    st.image(Image.open(io.BytesIO(con["image"])), caption="Work Sample Portfolio", use_container_width=True)
+                    # Optimizing Image loading using Streamlit's built-in memory buffer rendering
+                    st.image(con["image"], caption="Work Sample Portfolio", use_container_width=True)
                 else:
                     st.warning("📸 No portfolio image uploaded.")
 
@@ -242,6 +246,8 @@ if page == "Find Contractors":
                     conn.commit()
                     c.close()
                     conn.close()
+                    # Clear query cache so the submitted rating reflects immediately upon rerun
+                    st.cache_data.clear()
                     st.success("Rating submitted successfully!")
                     st.rerun()
             st.divider()
@@ -257,8 +263,7 @@ elif page == "Materials Store":
 
     for mat in materials_list:
         with st.container():
-            col_info, col_contact = st.columns([3, 1])  #  Fixed Explicit Weights#with st.container():
-            #col_info, col_contact = st.columns()
+            col_info, col_contact = st.columns([3, 1])
             with col_info:
                 st.markdown(f"#### 📦 {mat['item']}")
                 st.write(f"🏢 **Supplier:** {mat['supplier']} | 📍 **Depot:** {mat['location']}")
@@ -326,6 +331,7 @@ elif page == "Join Marketplace":
                 conn.commit()
                 c.close()
                 conn.close()
+                st.cache_data.clear() # Clear cache to display the newly registered professional
                 st.success("Your professional Mjengo profile is now live!")
             else:
                 st.error("Missing mandatory fields: Name, Location, and Phone Number.")
@@ -349,6 +355,7 @@ elif page == "Join Marketplace":
                 conn.commit()
                 c.close()
                 conn.close()
+                st.cache_data.clear() # Clear cache to display the newly added material item
                 st.success("Item inventory listed successfully!")
             else:
                 st.error("Missing mandatory fields: Supplier, Item, Price, Location, and Phone.")
@@ -368,8 +375,7 @@ elif page == "Admin Panel":
         c.execute("SELECT id, name, profession, location FROM contractors")
         cons_list = c.fetchall()
         for con_row in cons_list:
-            col_txt, col_del = st.columns([4, 1])  #  Fixed Explicit Weights
-            #col_txt, col_del = st.columns()
+            col_txt, col_del = st.columns([4, 1])
             col_txt.write(f"ID: {con_row['id']} | {con_row['name']} ({con_row['profession']}) - {con_row['location']}")
             if col_del.button("🗑️ Delete Contractor", key=f"del_c_{con_row['id']}"):
                 sub_conn = get_db_connection()
@@ -378,6 +384,7 @@ elif page == "Admin Panel":
                 sub_conn.commit()
                 sub_c.close()
                 sub_conn.close()
+                st.cache_data.clear() # Clear cache so deletion propagates everywhere
                 st.warning(f"Profile {con_row['name']} removed.")
                 st.rerun()
                 
@@ -385,8 +392,7 @@ elif page == "Admin Panel":
         c.execute("SELECT id, supplier_name, item_name, location FROM materials")
         mats_list = c.fetchall()
         for mat_row in mats_list:
-            col_m_txt, col_m_del = st.columns([4, 1])  #  Fixed Explicit Weights
-            #col_m_txt, col_m_del = st.columns()
+            col_m_txt, col_m_del = st.columns([4, 1])
             col_m_txt.write(f"ID: {mat_row['id']} | {mat_row['item_name']} by {mat_row['supplier_name']} ({mat_row['location']})")
             if col_m_del.button("🗑️ Remove Listing", key=f"del_m_{mat_row['id']}"):
                 sub_conn = get_db_connection()
@@ -395,6 +401,7 @@ elif page == "Admin Panel":
                 sub_conn.commit()
                 sub_c.close()
                 sub_conn.close()
+                st.cache_data.clear() # Clear cache so removal propagates immediately
                 st.warning("Material listing purged.")
                 st.rerun()
                 
