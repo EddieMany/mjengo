@@ -26,13 +26,40 @@ def get_admin_passcode():
 
 
 # --- DATABASE CONNECTION UTILITY ---
+
+# --- DATABASE CONNECTION UTILITY ---
 def get_db_connection():
-    """Establishes a connection to the hosted Supabase PostgreSQL instance securely."""
-    db_url = st.secrets.get("DATABASE_URL") or os.environ.get("DATABASE_URL")
-    if not db_url:
-        st.error("Missing DATABASE_URL secret parameter! Please check your configuration.")
+    """Establishes a connection to the hosted Supabase PostgreSQL instance securely using individual parameters."""
+    try:
+        # Check if individual parameters are set
+        if "DB_HOST" in st.secrets:
+            return psycopg2.connect(
+                host=st.secrets["DB_HOST"],
+                database=st.secrets["DB_NAME"],
+                user=st.secrets["DB_USER"],
+                password=st.secrets["DB_PASS"],
+                port=st.secrets["DB_PORT"],
+                sslmode="require"
+            )
+        
+        # Fallback to absolute URL if present
+        db_url = st.secrets.get("DATABASE_URL") or os.environ.get("DATABASE_URL")
+        if db_url:
+            return psycopg2.connect(db_url)
+            
+        st.error("Missing database connection parameter secrets!")
         st.stop()
-    return psycopg2.connect(db_url)
+    except Exception as e:
+        st.error(f"🔌 Database Connection Failed: {str(e)}")
+        st.stop()
+
+#def get_db_connection():
+#    """Establishes a connection to the hosted Supabase PostgreSQL instance securely."""
+#    db_url = st.secrets.get("DATABASE_URL") or os.environ.get("DATABASE_URL")
+#    if not db_url:
+#        st.error("Missing DATABASE_URL secret parameter! Please check your configuration.")
+#        st.stop()
+#    return psycopg2.connect(db_url)
 
 
 # --- DATABASE SETUP ---
