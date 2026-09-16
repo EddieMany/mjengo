@@ -257,7 +257,8 @@ elif page == "Materials Store":
 
     for mat in materials_list:
         with st.container():
-            col_info, col_contact = st.columns()
+            col_info, col_contact = st.columns([3, 1])  #  Fixed Explicit Weights#with st.container():
+            #col_info, col_contact = st.columns()
             with col_info:
                 st.markdown(f"#### 📦 {mat['item']}")
                 st.write(f"🏢 **Supplier:** {mat['supplier']} | 📍 **Depot:** {mat['location']}")
@@ -367,7 +368,8 @@ elif page == "Admin Panel":
         c.execute("SELECT id, name, profession, location FROM contractors")
         cons_list = c.fetchall()
         for con_row in cons_list:
-            col_txt, col_del = st.columns()
+            col_txt, col_del = st.columns([4, 1])  #  Fixed Explicit Weights
+            #col_txt, col_del = st.columns()
             col_txt.write(f"ID: {con_row['id']} | {con_row['name']} ({con_row['profession']}) - {con_row['location']}")
             if col_del.button("🗑️ Delete Contractor", key=f"del_c_{con_row['id']}"):
                 sub_conn = get_db_connection()
@@ -383,7 +385,8 @@ elif page == "Admin Panel":
         c.execute("SELECT id, supplier_name, item_name, location FROM materials")
         mats_list = c.fetchall()
         for mat_row in mats_list:
-            col_m_txt, col_m_del = st.columns()
+            col_m_txt, col_m_del = st.columns([4, 1])  #  Fixed Explicit Weights
+            #col_m_txt, col_m_del = st.columns()
             col_m_txt.write(f"ID: {mat_row['id']} | {mat_row['item_name']} by {mat_row['supplier_name']} ({mat_row['location']})")
             if col_m_del.button("🗑️ Remove Listing", key=f"del_m_{mat_row['id']}"):
                 sub_conn = get_db_connection()
